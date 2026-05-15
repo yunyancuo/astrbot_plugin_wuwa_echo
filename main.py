@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -14,6 +14,7 @@ from .core.models import ScoreResult, SetScoreResult
 from .core.ocr import (
     SET_ECHO_PROMPT_ZH,
     SINGLE_ECHO_PROMPT_ZH,
+    glm_ocr_recognize_single,
     parse_set,
     parse_single,
     vision_recognize,
@@ -54,6 +55,7 @@ class WuwaEchoPlugin(Star):
         self.default_character = self.config.get("default_character", "generic_crit")
         self.show_breakdown = bool(self.config.get("show_substat_breakdown", True))
         self.vision_provider_id = str(self.config.get("vision_provider_id", "") or "").strip()
+        self.zhipu_glm_ocr_key = str(self.config.get("zhipu_glm_ocr_key", "") or "").strip()
 
         # session_key -> (timestamp, image_url) — "先发图后艾特"用
         self._image_cache: Dict[str, Tuple[float, str]] = {}
@@ -266,6 +268,18 @@ class WuwaEchoPlugin(Star):
         return p
 
     async def _score_single_from_image(self, image_url: str, character: str) -> ScoreResult:
+        # 快速通道: 配了智谱 GLM-OCR key 就走专用 OCR 接口(1.5-3s vs 30s+)
+        if self.zhipu_glm_ocr_key:
+            try:
+                echo = await glm_ocr_recognize_single(
+                    self.zhipu_glm_ocr_key, image_url
+                )
+                return self.scorer.score_echo(echo, character)
+            except Exception as e:
+                logger.warning(
+                    f"GLM-OCR 失败,回退到多模态 vision_provider: {e}"
+                )
+        # 回退: 走多模态 LLM
         provider = self._get_vision_provider()
         raw = await vision_recognize(provider, image_url, SINGLE_ECHO_PROMPT_ZH)
         echo = parse_single(raw)
