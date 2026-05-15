@@ -120,11 +120,12 @@ class WuwaEchoPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_any_message(self, event: AstrMessageEvent):
-        """监听所有消息: 见图静默缓存; 有 pending 时凑齐(图/角色)就自动评分。"""
+        """监听所有消息: 见图静默缓存,无意图直接拦截 LLM; 有 pending 时凑齐自动评分。"""
         key = self._session_key(event)
         now = time.time()
         image_url = self._extract_image_url(event)
         text = self._message_text(event).strip()
+        has_intent = self._has_scoring_intent(event)
 
         # 总是缓存最近图片
         if image_url:
@@ -132,37 +133,52 @@ class WuwaEchoPlugin(Star):
         self._prune_caches(now)
 
         pending = self._pending.get(key)
-        if pending is None:
+
+        # 有 pending → 尝试补齐(图/角色)
+        if pending is not None:
+            if image_url and not pending.image_url:
+                pending.image_url = image_url
+            if not pending.character and text and not has_intent:
+                # 仅当用户当前消息不是评分意图(避免重复触发 tool)
+                resolved = self._resolve_canonical(text)
+                if resolved:
+                    pending.character = resolved
+
+            # 凑齐了 → 评分,并阻止 LLM 再回一条
+            if pending.image_url and pending.character:
+                self._pending.pop(key, None)
+                try:
+                    async for chunk in self._do_score(
+                        event, pending.image_url, pending.character, pending.mode
+                    ):
+                        await event.send(chunk)
+                except Exception as e:
+                    logger.exception("listener 续办评分失败")
+                    await event.send(event.plain_result(f"评分失败: {e}"))
+                self._stop(event)
+                return
+
+            # 还不齐但有进展: 更新时间戳并维持 pending
+            pending.timestamp = now
+            self._pending[key] = pending
             return
 
-        # 尝试补齐
-        if image_url and not pending.image_url:
-            pending.image_url = image_url
-        if not pending.character and text and not self._has_scoring_intent(event):
-            # 仅当用户当前消息不是评分意图(避免重复触发 tool)且能解析为角色名
-            resolved = self._resolve_canonical(text)
-            if resolved:
-                pending.character = resolved
-
-        # 凑齐了 → 评分,并阻止 LLM 再回一条
-        if pending.image_url and pending.character:
-            self._pending.pop(key, None)
-            try:
-                async for chunk in self._do_score(
-                    event, pending.image_url, pending.character, pending.mode
-                ):
-                    await event.send(chunk)
-            except Exception as e:
-                logger.exception("listener 续办评分失败")
-                await event.send(event.plain_result(f"评分失败: {e}"))
-            stop = getattr(event, "stop_event", None)
-            if callable(stop):
-                stop()
+        # 没 pending: 用户只发图(没意图关键词) → 完全静默,拦截 LLM
+        # 用户发了其他文字: 让 LLM 走默认对话流程
+        if image_url and not has_intent:
+            self._stop(event)
             return
 
-        # 仍不齐: 更新 pending 时间戳并维持
-        pending.timestamp = now
-        self._pending[key] = pending
+    def _stop(self, event: AstrMessageEvent) -> None:
+        """阻止事件继续往下传(LLM/其他插件不会再处理这条消息)。"""
+        for name in ("stop_event", "stop", "halt"):
+            fn = getattr(event, name, None)
+            if callable(fn):
+                try:
+                    fn()
+                    return
+                except Exception:
+                    pass
 
     # ===================== Helpers =====================
 
