@@ -67,6 +67,9 @@ class WuwaEchoPlugin(Star):
     async def on_any_message(self, event: AstrMessageEvent):
         """所有消息进这里;识别意图+图+角色名,直接评分,不调任何 LLM。
 
+        关键: 一旦判断本插件要处理这条消息,**立即** stop_event() 阻断 LLM 并发跑,
+        再去做耗时的 OCR + 评分。
+
         分支:
           1. 有 pending 且能补齐 → 评分
           2. 有意图 + 角色 + 图(当前或缓存) → 直接评分
@@ -87,44 +90,53 @@ class WuwaEchoPlugin(Star):
 
         pending = self._pending.get(key)
 
-        # ===== 分支 1: 有 pending,尝试补齐 =====
+        # ====== 先判断本插件是否吃下这条消息(决定要不要 stop_event) ======
+        will_handle = False
+        if pending is not None:
+            will_handle = True
+        elif has_intent:
+            will_handle = True
+        elif image_url:
+            # 纯图无意图: 静默缓存
+            will_handle = True
+
+        if will_handle:
+            # 立即终止事件传播,阻止 LLM agent 并发跑(关键!)
+            self._stop(event)
+
+        # ====== 后续慢处理(此时 LLM 已被阻断) ======
+
+        # 分支 1: 有 pending,尝试补齐
         if pending is not None:
             if image_url and not pending.image_url:
                 pending.image_url = image_url
             if not pending.character and text and not has_intent:
-                # 用户只发一个角色名/昵称作为后续补充
                 resolved = self._resolve_canonical(text)
                 if resolved:
                     pending.character = resolved
-            # 凑齐了 → 评分
             if pending.image_url and pending.character:
                 self._pending.pop(key, None)
                 await self._send_score(
                     event, pending.image_url, pending.character, pending.mode
                 )
-                self._stop(event)
                 return
-            # 还不齐,但若用户消息没新增信息也不再啰嗦
             pending.timestamp = now
             self._pending[key] = pending
-            # 若用户本次又输入了评分意图,走分支 2 重新处理;否则返回
             if not has_intent:
                 return
+            # has_intent 时往下走,允许覆盖 pending
 
-        # ===== 分支 2 / 3: 有意图 =====
+        # 分支 2/3: 有意图
         if has_intent:
             canonical = self._extract_character_from_text(text)
             img_url, _ = self._find_image(event)
             mode = "set" if self._is_set_mode(text) else "single"
 
             if canonical and img_url:
-                # 全齐,直接评分
                 self._pending.pop(key, None)
                 await self._send_score(event, img_url, canonical, mode)
-                self._stop(event)
                 return
 
-            # 不齐,登记 pending
             self._pending[key] = PendingRequest(
                 timestamp=now,
                 image_url=img_url or "",
@@ -138,15 +150,13 @@ class WuwaEchoPlugin(Star):
             else:
                 msg = "图已收到,请告诉我角色名(如「今汐」「维妈」「风主」)。"
             await event.send(event.plain_result(msg))
-            self._stop(event)
             return
 
-        # ===== 分支 4: 纯图无意图 → 静默缓存 =====
+        # 分支 4: 纯图无意图 → 静默(已 stop_event)
         if image_url:
-            self._stop(event)
             return
 
-        # ===== 分支 5: 其他文字消息 → 透传,不 stop_event =====
+        # 分支 5: 其他文字 → 透传
         return
 
     # ====================== Helpers ======================
