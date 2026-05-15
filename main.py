@@ -45,6 +45,7 @@ class WuwaEchoPlugin(Star):
         "echo", "Echo", "ECHO",
         "声骸", "声骇", "声海",
     )
+    SET_MODE_KEYWORDS = ("整套", "一套", "全部", "5件", "5 件", "总评", "全套")
 
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -166,6 +167,24 @@ class WuwaEchoPlugin(Star):
             self._pending[key] = pending
             return
 
+        # 快速通道: 意图 + 文本里能抠出角色名 + 有图 → 跳过 LLM 直接评分
+        # 省 1-2s 的 LLM 决策时间,且彻底避免 agent loop 收尾等待
+        if has_intent:
+            canonical = self._extract_character_from_text(text)
+            img_url, _ = self._find_image(event)
+            if canonical and img_url:
+                mode = "set" if self._is_set_mode(text) else "single"
+                try:
+                    async for chunk in self._do_score(
+                        event, img_url, canonical, mode
+                    ):
+                        await event.send(chunk)
+                    self._stop(event)
+                    return
+                except Exception:
+                    logger.exception("快速通道评分失败,回退给 LLM tool")
+                    # 不 stop_event,让 LLM tool 接管
+
         # 没 pending: 用户只发图(没意图关键词) → 完全静默,拦截 LLM
         # 用户发了其他文字: 让 LLM 走默认对话流程
         if image_url and not has_intent:
@@ -246,6 +265,34 @@ class WuwaEchoPlugin(Star):
         if not text:
             return False
         return any(kw in text for kw in self.INTENT_KEYWORDS)
+
+    def _is_set_mode(self, text: str) -> bool:
+        return any(kw in text for kw in self.SET_MODE_KEYWORDS)
+
+    def _extract_character_from_text(self, text: str) -> str:
+        """从消息文本中抠出第一个能匹配上的角色规范名。
+
+        - 先剥掉意图关键词避免和角色名子串冲突
+        - 优先匹配规范名(更准),再匹配长度 >= 2 的别名
+        - 用于快速通道, 失败返回空串(让 LLM 接管)
+        """
+        if not text:
+            return ""
+        cleaned = text.lower()
+        for kw in self.INTENT_KEYWORDS:
+            cleaned = cleaned.replace(kw.lower(), " ")
+        if not cleaned.strip():
+            return ""
+
+        resolver = self.scorer.resolver
+        for canonical in resolver.canonical_names():
+            if canonical.lower() in cleaned:
+                return canonical
+        for canonical in resolver.canonical_names():
+            for alias in resolver.aliases_of(canonical):
+                if len(alias) >= 2 and alias.lower() in cleaned:
+                    return canonical
+        return ""
 
     def _get_vision_provider(self):
         if self.vision_provider_id:
