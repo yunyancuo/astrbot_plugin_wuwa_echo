@@ -1,5 +1,5 @@
 name: astrbot_plugin_wuwa_echo
 desc: 鸣潮声骸评分插件 — 静默缓存图片,关键词触发评分,只输出结果
-version: 0.4.0
+version: 0.3.3
 author: yunyancuo
 repo: https://github.com/yunyancuo/astrbot_plugin_wuwa_echo

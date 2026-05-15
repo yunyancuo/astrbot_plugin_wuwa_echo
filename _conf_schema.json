@@ -11,12 +11,6 @@
     "default": "",
     "hint": "填 AstrBot WebUI 中已配置的 provider 的 id 字段。主对话 LLM(如 DeepSeek)可继续用文本模型,此项指定专门用于视觉识别的备用 provider。"
   },
-  "zhipu_glm_ocr_key": {
-    "description": "智谱 GLM-OCR API Key。填了走 GLM-OCR 专用通道(单件评分约 1.5-3s),失败时回退到 vision_provider。整套评分仍走 vision_provider。",
-    "type": "string",
-    "default": "",
-    "hint": "open.bigmodel.cn 上申请的 API Key,与 vision_provider_id 互不冲突,可同时配置。"
-  },
   "vision_prompt_lang": {
     "description": "Vision LLM 识别返回的语言(zh/en)",
     "type": "string",
