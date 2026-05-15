@@ -1,0 +1,24 @@
+{
+  "default_character": {
+    "description": "未指定角色时使用的默认权重模板(通用双爆型)",
+    "type": "string",
+    "default": "generic_crit",
+    "hint": "对应 data/weights.json 中的 character 键"
+  },
+  "vision_provider_id": {
+    "description": "图片识别(OCR副词条)使用的 provider ID。留空 = 使用当前 provider。建议填一个支持视觉的多模态 provider ID(如 Kimi-vision、Qwen-VL、GPT-4o)",
+    "type": "string",
+    "default": "",
+    "hint": "填 AstrBot WebUI 中已配置的 provider 的 id 字段。主对话 LLM(如 DeepSeek)可继续用文本模型,此项指定专门用于视觉识别的备用 provider。"
+  },
+  "vision_prompt_lang": {
+    "description": "Vision LLM 识别返回的语言(zh/en)",
+    "type": "string",
+    "default": "zh"
+  },
+  "show_substat_breakdown": {
+    "description": "评分结果中是否展示每个副词条的得分明细",
+    "type": "bool",
+    "default": true
+  }
+}

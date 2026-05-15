@@ -1,0 +1,5 @@
+name: astrbot_plugin_wuwa_echo
+desc: 鸣潮声骸评分插件 — 自然语言+图片自动识别词条并给出评分/评级
+version: 0.2.0
+author: yunyancuo
+repo: https://github.com/yunyancuo/astrbot_plugin_wuwa_echo
