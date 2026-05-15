@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -100,6 +100,8 @@ class WuwaEchoPlugin(Star):
             self._pending.pop(key, None)
             async for chunk in self._do_score(event, image_url, canonical, mode):
                 yield chunk
+            # 显式终止 agent loop, 避免 AstrBot 等 60s 才打完成日志
+            self._stop(event)
             return
 
         # 不齐: 登记 pending,等用户补齐
@@ -115,6 +117,7 @@ class WuwaEchoPlugin(Star):
             yield event.plain_result(f"角色已记({canonical}),请发声骸截图。")
         else:
             yield event.plain_result("图已收到,请告诉我角色名(如「今汐」「维妈」「风主」)。")
+        self._stop(event)
 
     # ============== Passive listener: 缓存图片 + 续办 pending ==============
 
