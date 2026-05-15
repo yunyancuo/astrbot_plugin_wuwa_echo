@@ -102,10 +102,10 @@ class WuwaEchoPlugin(Star):
             will_handle = True
 
         if will_handle:
-            # 立即终止事件传播,阻止 LLM agent 并发跑(关键!)
+            # 立即终止事件传播 + 设两个 AstrBot 内部标志彻底阻止 LLM 阶段触发
+            # 仅 stop_event 不够,LLM agent 还会并发跑(实测在 v4.24.2)
             self._stop(event)
-            # 让出事件循环 1 个 tick,确保 stop_event 信号被 pipeline 处理后
-            # 再继续 OCR 等耗时操作,避免 LLM agent 趁 await 间隙启动
+            self._mark_no_llm(event)
             await asyncio.sleep(0)
 
         # ====== 后续慢处理(此时 LLM 已被阻断) ======
@@ -175,6 +175,21 @@ class WuwaEchoPlugin(Star):
                     return
                 except Exception:
                     pass
+
+    def _mark_no_llm(self, event: AstrMessageEvent) -> None:
+        """设置 AstrBot 内部标志,跳过 process_stage 的 LLM 调用。
+
+        AstrBot v4.24.2 的 process_stage/stage.py 在判断是否调 LLM 时检查:
+          - event._has_send_oper == True → 跳
+          - event.call_llm == True → 跳(表示"已调过 LLM")
+        listener 走的路径不自动设这两个标志,LLM agent 会并发跑出 14-20s 幽灵 tail。
+        手动设上以彻底阻断。
+        """
+        for attr in ("_has_send_oper", "call_llm"):
+            try:
+                setattr(event, attr, True)
+            except Exception:
+                pass
 
     def _resolve_canonical(self, raw: str) -> str:
         """把任意输入解析为规范名,失败返回空串。"""
