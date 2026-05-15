@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import base64
-import io
 import json
 import re
 from typing import List, Optional
-
-import httpx
-from PIL import Image as PILImage
 
 from .models import Echo, EchoSet, SubStat
 
@@ -93,43 +88,10 @@ def parse_set(raw_text: str) -> EchoSet:
     return EchoSet(echoes=echoes)
 
 
-MAX_IMAGE_DIM = 1024  # 图片最长边像素;过大会让识图 provider 慢得离谱
-JPEG_QUALITY = 85
-
-
-async def _preprocess_image(image_url: str) -> Optional[str]:
-    """下载图片 → 缩到 1024 长边 → JPEG 压 → data URL。失败返回 None,调用方原样回退。"""
-    try:
-        # 本地文件 URL 不预处理(通常已在容器里,而且 AstrBot 自己会处理)
-        if image_url.startswith("file://") or image_url.startswith("/"):
-            return None
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            r = await client.get(image_url)
-            r.raise_for_status()
-            raw = r.content
-        with PILImage.open(io.BytesIO(raw)) as im:
-            im = im.convert("RGB")
-            w, h = im.size
-            longest = max(w, h)
-            if longest > MAX_IMAGE_DIM:
-                ratio = MAX_IMAGE_DIM / longest
-                im = im.resize((int(w * ratio), int(h * ratio)), PILImage.LANCZOS)
-            buf = io.BytesIO()
-            im.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True)
-            data = buf.getvalue()
-        b64 = base64.b64encode(data).decode("ascii")
-        return f"data:image/jpeg;base64,{b64}"
-    except Exception:
-        return None
-
-
 async def vision_recognize(provider, image_url: str, prompt: str) -> str:
-    """调用 LLM provider 的多模态接口识别图片。
-    图片先在本地预处理(下载→缩放→JPEG)以减少识图延迟。
-    预处理失败时原样传 URL 回退。"""
-    payload_url = await _preprocess_image(image_url) or image_url
+    """调用 AstrBot LLM provider 的多模态接口识别图片。"""
     response = await provider.text_chat(
         prompt=prompt,
-        image_urls=[payload_url],
+        image_urls=[image_url],
     )
     return getattr(response, "completion_text", "") or str(response)
