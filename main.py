@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,6 +104,9 @@ class WuwaEchoPlugin(Star):
         if will_handle:
             # 立即终止事件传播,阻止 LLM agent 并发跑(关键!)
             self._stop(event)
+            # 让出事件循环 1 个 tick,确保 stop_event 信号被 pipeline 处理后
+            # 再继续 OCR 等耗时操作,避免 LLM agent 趁 await 间隙启动
+            await asyncio.sleep(0)
 
         # ====== 后续慢处理(此时 LLM 已被阻断) ======
 

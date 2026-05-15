@@ -1,5 +1,5 @@
 name: astrbot_plugin_wuwa_echo
 desc: 鸣潮声骸评分插件 — 纯监听器实现,不走 LLM,关键词触发评分,秒回
-version: 0.4.1
+version: 0.4.2
 author: yunyancuo
 repo: https://github.com/yunyancuo/astrbot_plugin_wuwa_echo
