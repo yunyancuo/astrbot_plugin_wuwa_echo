@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import List
@@ -7,9 +8,7 @@ from typing import List
 from .models import Echo, EchoSet, SubStat
 
 
-SINGLE_ECHO_PROMPT_ZH = """你是鸣潮(Wuthering Waves)声骸识别助手。仔细识别图片中的声骸信息,严格按 JSON 输出,不要任何额外文字。
-
-# 主词条 vs 副词条的区分(极其重要!)
+SUBSTAT_RULES_ZH = """# 主词条 vs 副词条的区分(极其重要!)
 
 游戏 UI 里:
 - **主词条**: 在卡片上方,**不带 + 前缀**的大字条目。
@@ -35,6 +34,14 @@ SINGLE_ECHO_PROMPT_ZH = """你是鸣潮(Wuthering Waves)声骸识别助手。仔
 共鸣效率 ≤ 11.6  |  各类伤害加成 ≤ 11.6
 攻击 ≤ 60  |  生命 ≤ 580  |  防御 ≤ 70
 
+# 副词条标准名(只能从这 13 个里选)
+
+暴击, 暴击伤害, 攻击%, 生命%, 防御%, 共鸣效率, 普攻伤害加成, 重击伤害加成, 共鸣技能伤害加成, 共鸣解放伤害加成, 攻击, 生命, 防御
+"""
+
+SINGLE_ECHO_PROMPT_ZH = f"""你是鸣潮(Wuthering Waves)声骸识别助手。仔细识别图片中的声骸信息,严格按 JSON 输出,不要任何额外文字。
+
+{SUBSTAT_RULES_ZH}
 # 输出字段
 
 - cost: 整数,COST 值(1/3/4)
@@ -42,27 +49,23 @@ SINGLE_ECHO_PROMPT_ZH = """你是鸣潮(Wuthering Waves)声骸识别助手。仔
 - main_stat: 字符串,**可变那个主词条**的名字(COST 4 时不是固定的"攻击 150")
 - main_stat_value: 数字,主词条数值
 - level: 整数,强化等级(0-25,通常 +25)
-- sub_stats: 数组(1-5 项),每项 {"name": "副词条标准名", "value": 数字}
-
-副词条**标准名**只能从下面这 13 个里选:
-暴击, 暴击伤害, 攻击%, 生命%, 防御%, 共鸣效率, 普攻伤害加成, 重击伤害加成, 共鸣技能伤害加成, 共鸣解放伤害加成, 攻击, 生命, 防御
+- sub_stats: 数组(1-5 项),每项 {{"name": "副词条标准名", "value": 数字}}
 
 仅输出 JSON,不要 markdown 代码块,不要任何解释:
-{"cost": 4, "set_name": "凝夜白霜", "main_stat": "暴击伤害", "main_stat_value": 44.0, "level": 25, "sub_stats": [{"name": "暴击", "value": 9.3}, {"name": "攻击%", "value": 10.5}]}
+{{"cost": 4, "set_name": "凝夜白霜", "main_stat": "暴击伤害", "main_stat_value": 44.0, "level": 25, "sub_stats": [{{"name": "暴击", "value": 9.3}}, {{"name": "攻击%", "value": 10.5}}]}}
 """
 
-SET_ECHO_PROMPT_ZH = """你是鸣潮(Wuthering Waves)声骸识别助手。图片包含一套(最多 5 件)声骸,请逐个识别,严格按 JSON 输出,不要任何额外文字。
+SET_ECHO_PROMPT_ZH = f"""你是鸣潮(Wuthering Waves)声骸识别助手。图片包含一套(最多 5 件)声骸,请逐个识别,严格按 JSON 输出,不要任何额外文字。
 
-输出格式:
-{"echoes": [
-  {"cost": 4, "set_name": "...", "main_stat": "...", "main_stat_value": 0.0, "level": 25, "sub_stats": [{"name": "...", "value": 0.0}, ...]},
+{SUBSTAT_RULES_ZH}
+# 输出格式
+
+{{"echoes": [
+  {{"cost": 4, "set_name": "凝夜白霜", "main_stat": "暴击伤害", "main_stat_value": 44.0, "level": 25, "sub_stats": [{{"name": "暴击", "value": 9.3}}]}},
   ...
-]}
+]}}
 
-副词条名称必须用下列标准名之一:
-暴击, 暴击伤害, 攻击%, 生命%, 防御%, 共鸣效率, 普攻伤害加成, 重击伤害加成, 共鸣技能伤害加成, 共鸣解放伤害加成, 攻击, 生命, 防御
-
-百分比类型只填数字部分(如 9.3 表示 9.3%)。识别不到的字段填 null。
+百分比类型只填数字部分(如 9.3 表示 9.3%)。识别不到的字段填 null。看不清的声骸直接跳过,不要编造数值。
 """
 
 
@@ -77,6 +80,14 @@ SUBSTAT_MAX_VALUE = {
 }
 
 
+def _to_int(value, default: int = 0) -> int:
+    """OCR 返回的数字可能是 None / 字符串 / 浮点,统一安全转换。"""
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def _extract_json(text: str) -> str:
     """从 LLM 输出中提取第一个 JSON 对象。"""
     text = text.strip()
@@ -87,6 +98,13 @@ def _extract_json(text: str) -> str:
     if not match:
         raise ValueError(f"LLM 输出中找不到 JSON: {text[:200]}")
     return match.group(0)
+
+
+def _load_json(raw_text: str) -> dict:
+    try:
+        return json.loads(_extract_json(raw_text))
+    except json.JSONDecodeError:
+        raise ValueError("识别结果解析失败,请重新发送一次试试。")
 
 
 def _sanitize_substats(raw_subs) -> List[SubStat]:
@@ -135,47 +153,62 @@ def _validate_echo(echo: Echo, *, idx: int = -1) -> None:
         )
 
 
-def parse_single(raw_text: str) -> Echo:
-    data = json.loads(_extract_json(raw_text))
-    subs = _sanitize_substats(data.get("sub_stats", []))
+def _build_echo(item: dict, *, idx: int = -1) -> Echo:
+    subs = _sanitize_substats(item.get("sub_stats", []))
     echo = Echo(
-        cost=int(data.get("cost", 4)),
-        set_name=data.get("set_name"),
-        main_stat=data.get("main_stat"),
-        main_stat_value=data.get("main_stat_value"),
+        cost=_to_int(item.get("cost"), 4),
+        set_name=item.get("set_name"),
+        main_stat=item.get("main_stat"),
+        main_stat_value=item.get("main_stat_value"),
         sub_stats=subs,
-        level=int(data.get("level", 0)),
+        level=_to_int(item.get("level"), 0),
     )
-    _validate_echo(echo)
+    _validate_echo(echo, idx=idx)
     return echo
 
 
+def parse_single(raw_text: str) -> Echo:
+    data = _load_json(raw_text)
+    return _build_echo(data)
+
+
 def parse_set(raw_text: str) -> EchoSet:
-    data = json.loads(_extract_json(raw_text))
+    """整套识别采用宽容策略: 单件识别失败只跳过该件,不整体报错。
+
+    只要能识别出至少 1 件就返回;一件都没有才抛错。
+    """
+    data = _load_json(raw_text)
     echoes_raw = data.get("echoes", [])
     if not isinstance(echoes_raw, list):
-        raise ValueError("echoes 字段必须是数组")
+        raise ValueError("识别结果格式不对,请重新发送一次试试。")
 
     echoes: List[Echo] = []
+    failures: List[str] = []
     for i, item in enumerate(echoes_raw):
-        subs = _sanitize_substats(item.get("sub_stats", []))
-        echo = Echo(
-            cost=int(item.get("cost", 4)),
-            set_name=item.get("set_name"),
-            main_stat=item.get("main_stat"),
-            main_stat_value=item.get("main_stat_value"),
-            sub_stats=subs,
-            level=int(item.get("level", 0)),
+        if not isinstance(item, dict):
+            continue
+        try:
+            echoes.append(_build_echo(item, idx=i))
+        except ValueError as e:
+            failures.append(f"第 {i + 1} 件没识别完整({e})")
+
+    if not echoes:
+        detail = f"主要问题: {failures[0]}" if failures else ""
+        raise ValueError(
+            f"这套声骸一件都没识别完整,图片可能模糊或截图不完整。{detail}"
         )
-        _validate_echo(echo, idx=i)
-        echoes.append(echo)
     return EchoSet(echoes=echoes)
 
 
-async def vision_recognize(provider, image_url: str, prompt: str) -> str:
-    """调用 AstrBot LLM provider 的多模态接口识别图片。"""
-    response = await provider.text_chat(
+async def vision_recognize(
+    provider, image_url: str, prompt: str, timeout: float = 45.0
+) -> str:
+    """调用 AstrBot LLM provider 的多模态接口识别图片。超时抛 asyncio.TimeoutError。"""
+    coro = provider.text_chat(
         prompt=prompt,
         image_urls=[image_url],
     )
+    if timeout and timeout > 0:
+        coro = asyncio.wait_for(coro, timeout=timeout)
+    response = await coro
     return getattr(response, "completion_text", "") or str(response)

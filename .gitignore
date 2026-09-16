@@ -7,3 +7,9 @@ __pycache__/
 .vscode/
 .claude/
 *.log
+
+# 与插件无关的本地文件,勿提交
+/config.json
+/config.min.json
+/gen_accounting_pivot.py
+*.bak

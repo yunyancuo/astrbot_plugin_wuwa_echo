@@ -6,15 +6,30 @@
     "hint": "对应 data/weights.json 中的 character 键"
   },
   "vision_provider_id": {
-    "description": "图片识别(OCR副词条)使用的 provider ID。留空 = 使用当前 provider。建议填一个支持视觉的多模态 provider ID(如 Kimi-vision、Qwen-VL、GPT-4o)",
+    "description": "图片识别(OCR副词条)使用的 provider ID。留空 = 使用当前 provider。建议填一个支持视觉的多模态 provider ID(如 Qwen-VL、GLM-4V、GPT-4o)",
     "type": "string",
     "default": "",
     "hint": "填 AstrBot WebUI 中已配置的 provider 的 id 字段。主对话 LLM(如 DeepSeek)可继续用文本模型,此项指定专门用于视觉识别的备用 provider。"
   },
-  "vision_prompt_lang": {
-    "description": "Vision LLM 识别返回的语言(zh/en)",
-    "type": "string",
-    "default": "zh"
+  "vision_timeout_sec": {
+    "description": "视觉识别的超时时间(秒),超时后提示用户重试",
+    "type": "int",
+    "default": 45
+  },
+  "group_require_at": {
+    "description": "群聊是否必须 @ bot 才响应(私聊不受影响)。关闭后群里任何含关键词的消息都会触发,容易误伤",
+    "type": "bool",
+    "default": true
+  },
+  "auto_sync": {
+    "description": "自动同步上游角色数据(XutheringWavesUID-Resources): 新版本角色出现后自动补充评分权重和别名,无需手动更新插件",
+    "type": "bool",
+    "default": true
+  },
+  "sync_interval_hours": {
+    "description": "上游数据同步间隔(小时)",
+    "type": "int",
+    "default": 24
   },
   "show_substat_breakdown": {
     "description": "评分结果中是否展示每个副词条的得分明细",

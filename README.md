@@ -2,7 +2,7 @@
 
 > 鸣潮（Wuthering Waves）声骸评分 AstrBot 插件 · **纯监听器 + 多模态 OCR · 端到端 2–4 秒**
 
-[![version](https://img.shields.io/badge/version-0.4.3-blue)](https://github.com/yunyancuo/astrbot_plugin_wuwa_echo/releases) [![AstrBot](https://img.shields.io/badge/AstrBot-v4.x-green)](https://docs.astrbot.app)
+[![version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/yunyancuo/astrbot_plugin_wuwa_echo/releases) [![AstrBot](https://img.shields.io/badge/AstrBot-v4.x-green)](https://docs.astrbot.app)
 
 发图 + 说"千咲评分"，3 秒拿到 SSS 评级与逐条词条分析。不走 LLM 推理，不依赖 function calling，关键词命中即触发。
 
@@ -17,31 +17,34 @@
 | 先发图 → 再 `@bot 评分千咲` | 用刚才的图评分 | **2–4s** |
 | `@bot 评分今汐`（没图） → 后续单独发图 | 自动续上评分 | **2–4s** |
 | *（只发图，无关键词）* | **完全静默**，后台缓存 5 分钟 | 0s |
-| `@bot 你好` | 走 AstrBot 自带 LLM 聊天 | — |
+| `@bot 你好` / 普通闲聊 | 走 AstrBot 自带 LLM 聊天 | — |
 
 ---
 
 ## 触发条件
 
-群聊需要 @ bot；私聊直接说即可。命中下面三件套触发评分：
+**群聊必须 @ bot（或私聊）插件才会响应**——避免路人聊天里的"怎么样""好不好"误触发评分。补图/补角色名的续办消息无需再 @。
+
+命中下面三件套触发评分：
 
 | 要素 | 命中规则 |
 |---|---|
-| **意图关键词** | 文本里出现任一：`评分` `打分` `评级` `几分` `多少分` `鉴定` `词条` `品质` `怎么样` `好不好` `强不强` `echo` `声骸` `声骇` `声海` |
+| **强意图关键词** | 文本里出现任一即触发：`评分` `打分` `评级` `鉴定` `词条` `品质` `echo` `声骸` `声骇` `声海` |
+| **弱意图关键词** | `几分` `多少分` `怎么样` `好不好` `强不强` — 太日常，需**同时有图或角色名**才算评分意图，否则放行给 LLM |
 | **整套模式**（可选） | 额外命中：`整套` `一套` `全部` `5件` `总评` `全套` → 走整套评分 |
 | **角色名** | 50 个规范名 + 500+ 玩家昵称 / 拼音缩写 / 英文名都能识别 |
 | **图片** | 当前消息附带，或同会话 5 分钟内缓存过的图 |
 
-三件套缺一项 bot 会反问；缺多项一次反问，等用户**补齐自动续办**——补充的消息无需再 @ bot。
+三件套缺一项 bot 会反问；缺多项一次反问，等用户**补齐自动续办**——补充的消息无需再 @ bot。等图/等角色名期间，**无关闲聊完全不受影响**，照常走 LLM。
 
 ---
 
 ## 工作原理
 
 ```text
-用户消息 ─▶ @filter.event_message_type 监听器 ─▶ 关键词扫描 ─▶ 视觉 OCR ─▶ 评分 ─▶ 回复
+用户消息 ─▶ @filter.event_message_type 监听器 ─▶ 群聊@检查 ─▶ 关键词扫描 ─▶ 视觉 OCR ─▶ 评分 ─▶ 回复
                        │
-                       └─ stop_event + _has_send_oper + call_llm
+                       └─ stop_event + should_call_llm(True)
                           ↑ 阻止 AstrBot 的 LLM agent 并发跑出"幽灵 tail"
 ```
 
@@ -90,19 +93,31 @@ LLM tool 让 DeepSeek 决定该不该调评分工具，工具完后还得让 LLM
 | 场景 | 处理 |
 |---|---|
 | 把 COST 4 的固定主词条 `攻击 150` 误识为副词条 | 数值上限兜底，超过副词条上限 1.05 倍直接丢弃 |
-| 图片模糊，副词条少于 5 条 | 报错 *"识别到 X 条副词条,不足 5 条,请发清晰截图"* |
+| 图片模糊，副词条少于 5 条（单件模式） | 报错 *"识别到 X 条副词条,不足 5 条,请发清晰截图"* |
+| 整套图里个别声骸识别不完整 | **只跳过坏件**，识别出几件评几件并提示缺件；全部识别失败才报错 |
 | COST 3/4 没识别出主词条 | 报错 *"图片可能模糊"* |
+| OCR provider 卡死/超时 | 按配置超时（默认 45s）主动中断，提示重试，不再无限等待 |
+| 同一张图重复触发评分 | 90 秒防重复窗口内静默忽略；识别失败可立刻重试 |
 | 角色名识别不到 | 反问 *"请告诉我角色名"*（不静默卡死） |
 
 ---
 
 ## 数据来源
 
-| 数据 | 来源 | 用途 |
+| 数据 | 来源 | 更新方式 |
 |---|---|---|
-| 50 角色副词条权重 | [anyul.cn](https://www.anyul.cn) | 算分核心 |
-| 500+ 玩家昵称 / 拼音 | [XutheringWavesUID](https://github.com/loping151/XutheringWavesUID) `char_alias.json` | 模糊匹配 |
+| 50 角色副词条权重 | [anyul.cn](https://www.anyul.cn) (2026-05 快照) | 手工维护, 永不覆盖 |
+| 新角色权重 + 全量别名 | [XutheringWavesUID-Resources](https://cnb.cool/loping151/XutheringWavesUID-Resources) (CNB 国内直连) | **自动同步** |
 | 图片 OCR | 你 AstrBot 配置的视觉 provider | 副词条识别 |
+
+**自动同步 (v0.6.0+)**: 插件启动后及每 24 小时(可配)从上游仓库拉取角色别名表与各角色评分数据 (`CharId2Data.json` + `character/{id}/calc.json`)。游戏出新角色后无需等插件更新——权重与别名单独管道自动补充，拉取失败自动回落本地快照，永不影响评分服务。也可手动执行：
+
+```bash
+python core/sync.py --data-dir data --check   # 只看上游有什么新角色
+python core/sync.py --data-dir data           # 同步并写入
+```
+
+> 新角色的权重由上游伤害计算模型 (0-2 连续权重) 相对分档映射为插件的 0-3 档 (≥75% 峰值=3, ≥40%=2, ≥12%=1)，每个生成条目的 `_desc` 里保留原始权重便于核对。上游还没生成评分数据的最新角色（如刚实装）会先落通用模板，下次同步自动补上。
 
 **推荐视觉 provider**：
 
@@ -145,8 +160,11 @@ WebUI → 插件管理 → `astrbot_plugin_wuwa_echo` → 配置：
 |---|---|---|
 | `default_character` | 未匹配角色时的兜底模板 | `generic_crit` |
 | **`vision_provider_id`** | 视觉 provider 的 AstrBot ID | `siliconflow/Qwen/Qwen3-VL-8B-Instruct` |
+| `vision_timeout_sec` | 识别超时秒数，超时提示重试 | `45` |
+| `group_require_at` | 群聊是否必须 @ bot 才响应 | `true` |
+| `auto_sync` | 自动同步上游新角色权重/别名 | `true` |
+| `sync_interval_hours` | 上游数据同步间隔(小时) | `24` |
 | `show_substat_breakdown` | 是否展示副词条明细 | `true` |
-| `vision_prompt_lang` | OCR 提示语言（zh/en） | `zh` |
 
 > ⚠️ `vision_provider_id` **必须**指向能看图的多模态模型。指向 DeepSeek 这种文本模型会 400 报错。
 >
@@ -200,7 +218,7 @@ docker restart astrbot
 
 ```text
 astrbot_plugin_wuwa_echo/
-├── main.py                # 监听器入口 + LLM 阻断逻辑
+├── main.py                # 监听器入口 + LLM 阻断逻辑 + 数据同步循环
 ├── metadata.yaml
 ├── _conf_schema.json
 ├── requirements.txt
@@ -209,10 +227,11 @@ astrbot_plugin_wuwa_echo/
 │   ├── models.py          # pydantic 数据模型
 │   ├── ocr.py             # vision provider 调用 + 副词条校验
 │   ├── scorer.py          # 评分核心
-│   └── resolver.py        # 角色名 / 别名 / 模糊匹配
+│   ├── resolver.py        # 角色名 / 别名 / 模糊匹配
+│   └── sync.py            # 上游数据自动同步 (可独立运行)
 └── data/
-    ├── weights.json       # 角色权重 + 副词条上限 + 评级阈值
-    └── aliases.json       # 角色 → 别名列表
+    ├── weights.json       # 角色权重 + 副词条上限 + 评级阈值 (含自动生成条目)
+    └── aliases.json       # 角色 → 别名列表 (本地自定义 + 上游合并)
 ```
 
 ---
@@ -230,7 +249,9 @@ astrbot_plugin_wuwa_echo/
 
 | 版本 | 关键变化 |
 |---|---|
-| **v0.4.3** ⭐ | 设置 `_has_send_oper` + `call_llm` 标志彻底阻断 LLM 阶段，幽灵 tail 清零 |
+| **v0.6.0** ⭐ | 新角色零维护: 接入 XutheringWavesUID-Resources (CNB 国内直连) 自动同步上游新角色的评分权重与别名, 本地手工条目永不覆盖, 拉取失败回落本地快照; `core/sync.py` 可独立运行 |
+| v0.5.0 | 群聊强制 @ 门控（防误触发吞消息）；pending 期间不再吞无关闲聊；弱意图词需配图/角色名；整套宽容解析（坏件跳过不整体报错）；OCR 超时保护 + 防重复评分；`default_character` 配置真正生效；移除无效配置 `vision_prompt_lang` |
+| v0.4.3 | 设置 `_has_send_oper` + `call_llm` 标志彻底阻断 LLM 阶段，幽灵 tail 清零 |
 | v0.4.2 | stop_event 后 `asyncio.sleep(0)` 让出 tick |
 | v0.4.1 | stop_event 提前到 OCR 之前 |
 | v0.4.0 | 全砍 LLM tool，纯监听器架构 |

@@ -20,9 +20,15 @@ class EchoScorer:
     评级阈值与权重表从 weights.json 加载,可热重载。
     """
 
-    def __init__(self, weights_path: Path, aliases_path: Optional[Path] = None):
+    def __init__(
+        self,
+        weights_path: Path,
+        aliases_path: Optional[Path] = None,
+        default_character: str = "generic_crit",
+    ):
         self.weights_path = weights_path
         self.aliases_path = aliases_path or (weights_path.parent / "aliases.json")
+        self.default_character = default_character or "generic_crit"
         self._raw: dict = {}
         self.resolver = CharacterResolver(self.aliases_path)
         self.load()
@@ -50,14 +56,19 @@ class EchoScorer:
             if result and result.canonical in chars:
                 character = result.canonical
             else:
-                character = "generic_crit"
+                character = self.default_character
+        if character not in chars:
+            character = "generic_crit"
         entry = chars[character]
         if "_alias_of" in entry:
             entry = chars[entry["_alias_of"]]
         return {k: v for k, v in entry.items() if not k.startswith("_")}
 
     def rank_for(self, score: float) -> str:
-        for rank, threshold in self.rank_thresholds.items():
+        # 按阈值降序匹配,不依赖 weights.json 里键的书写顺序
+        for rank, threshold in sorted(
+            self.rank_thresholds.items(), key=lambda kv: kv[1], reverse=True
+        ):
             if score >= threshold:
                 return rank
         return "N"
