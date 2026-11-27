@@ -1,0 +1,23 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle 错误
+    "F",   # pyflakes 逻辑缺陷
+    "W",   # pycodestyle 警告
+    "I",   # isort 导入排序
+    "B",   # flake8-bugbear 常见陷阱
+    "C4",  # flake8-comprehensions 推导式优化
+    "UP",  # pyupgrade 现代 Python 3.10+ 语法
+    "SIM", # flake8-simplify 逻辑简化
+]
+ignore = [
+    "E501", # 中文提示词与多模态 Prompt 保持完整句子可读性
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-ra"

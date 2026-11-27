@@ -6,7 +6,12 @@ __pycache__/
 .idea/
 .vscode/
 .claude/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 *.log
+*.tmp
 
 # 与插件无关的本地文件,勿提交
 /config.json
